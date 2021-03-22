@@ -37,7 +37,7 @@ from datamodel_code_generator.model.enum import Enum
 from datamodel_code_generator.parser import DefaultPutDict, LiteralType
 
 from ..model import pydantic as pydantic_model
-from ..parser.base import Parser
+from ..parser.base import Parser, escape_characters
 from ..reference import Reference, is_url
 from ..types import DataType, DataTypeManager, StrictTypes, Types
 
@@ -261,6 +261,7 @@ class JsonSchemaParser(Parser):
         remote_text_cache: Optional[DefaultPutDict[str, str]] = None,
         disable_appending_item_suffix: bool = False,
         strict_types: Optional[Sequence[StrictTypes]] = None,
+        empty_enum_field_name: Optional[str] = None,
     ):
         super().__init__(
             source=source,
@@ -295,6 +296,7 @@ class JsonSchemaParser(Parser):
             remote_text_cache=remote_text_cache,
             disable_appending_item_suffix=disable_appending_item_suffix,
             strict_types=strict_types,
+            empty_enum_field_name=empty_enum_field_name,
         )
 
         self.remote_object_cache: DefaultPutDict[str, Dict[str, Any]] = DefaultPutDict()
@@ -521,7 +523,6 @@ class JsonSchemaParser(Parser):
                         ):
                             additional_properties_type = self.data_type(
                                 literals=field.additionalProperties.enum,
-                                python_version=self.target_python_version,
                             )
                         else:
                             additional_properties_type = self.parse_enum(
@@ -567,9 +568,7 @@ class JsonSchemaParser(Parser):
                     field_type = self.data_type_manager.get_data_type(Types.object)
             elif field.enum:
                 if self.should_parse_enum_as_literal(field):
-                    field_type = self.data_type(
-                        literals=field.enum, python_version=self.target_python_version
-                    )
+                    field_type = self.data_type(literals=field.enum)
                 else:
                     field_type = self.parse_enum(field_name, field, [*path, field_name])
             else:
@@ -664,9 +663,7 @@ class JsonSchemaParser(Parser):
                 )
             elif item.enum:
                 if self.should_parse_enum_as_literal(item):
-                    return self.data_type(
-                        literals=item.enum, python_version=self.target_python_version
-                    )
+                    return self.data_type(literals=item.enum)
                 else:
                     return self.parse_enum(name, item, field_path, singular_name=True)
             elif item.is_array:
@@ -796,18 +793,24 @@ class JsonSchemaParser(Parser):
         if None in obj.enum and obj.type == 'string':
             # Nullable is valid in only OpenAPI
             nullable: bool = True
-            enum_times = [e for e in obj.enum if e]
+            enum_times = [e for e in obj.enum if e is not None]
         else:
             enum_times = obj.enum
             nullable = False
 
+        exclude_field_names: Set[str] = set()
+
         for i, enum_part in enumerate(enum_times):
             if obj.type == 'string' or isinstance(enum_part, str):
-                default = f"'{enum_part}'"
+                default = (
+                    f"'{enum_part.translate(escape_characters)}'"
+                    if isinstance(enum_part, str)
+                    else enum_part
+                )
                 if obj.x_enum_varnames:
                     field_name = obj.x_enum_varnames[i]
                 else:
-                    field_name = enum_part
+                    field_name = str(enum_part)
             else:
                 default = enum_part
                 if obj.x_enum_varnames:
@@ -819,10 +822,13 @@ class JsonSchemaParser(Parser):
                         else type(enum_part).__name__
                     )
                     field_name = f'{prefix}_{enum_part}'
-
+            field_name = self.model_resolver.get_valid_name(
+                field_name, excludes=exclude_field_names
+            )
+            exclude_field_names.add(field_name)
             enum_fields.append(
                 self.data_model_field_type(
-                    name=self.model_resolver.get_valid_name(field_name),
+                    name=field_name,
                     default=default,
                     data_type=self.data_type_manager.get_data_type(Types.any),
                     required=True,
