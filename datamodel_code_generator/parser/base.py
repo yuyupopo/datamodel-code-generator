@@ -1,3 +1,4 @@
+import keyword
 import re
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
@@ -55,7 +56,10 @@ escape_characters = str.maketrans(
 @lru_cache()
 def camel_to_snake(string: str) -> str:
     subbed = _UNDER_SCORE_1.sub(r'\1_\2', string)
-    return _UNDER_SCORE_2.sub(r'\1_\2', subbed).lower()
+    subbed = _UNDER_SCORE_2.sub(r'\1_\2', subbed).lower()
+    if keyword.iskeyword(subbed):
+        subbed = subbed + "_"
+    return subbed
 
 
 def to_hashable(item: Any) -> Any:
